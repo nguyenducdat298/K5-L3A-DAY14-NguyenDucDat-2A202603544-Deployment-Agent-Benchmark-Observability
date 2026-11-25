@@ -192,3 +192,72 @@ Total messages: 10
 - **Liveness (`/health`) vs Readiness (`/ready`):**
   - `/health` (liveness): kiểm tra process app còn sống hay đã treo (nếu fail → restart container).
   - `/ready` (readiness): kiểm tra app đã sẵn sàng nhận traffic chưa (ví dụ: kết nối Redis thành công; nếu fail → load balancer tạm ngừng gửi request tới instance đó).
+
+---
+
+## Part 3: Cloud Deployment (CP6)
+
+### 1. Deploy lên Railway (Exercise 3.1)
+
+- **Public URL:** https://helpful-acceptance-production-b7fe1f20.up.railway.app
+- **Cấu hình:** Service `helpful-acceptance` trỏ Root Directory `/06-lab-complete`, build bằng `Dockerfile`, gắn Redis service (`REDIS_URL=${{Redis.REDIS_URL}}`) và đặt `AGENT_API_KEY` qua Railway Variables.
+- **Screenshot:** [screenshots/dashboard.png](screenshots/dashboard.png)
+- **Kết quả kiểm tra 4 endpoint public:**
+  - `GET /health` → **`200`**
+  - `GET /ready` → **`200`** (`{"status":"ready","redis":"ok"}`)
+  - `POST /ask` (không có `X-API-Key`) → **`401`**
+  - `POST /ask` (có `X-API-Key` hợp lệ) → **`200`** (`{"question":"Hello","answer":"Agent đang hoạt động tốt! (mock response) Hỏi thêm câu hỏi đi nhé.","usage":{"requests_remaining":8,"spent_usd":0.002}}`)
+
+### 2. So sánh `railway.toml` vs `render.yaml`
+
+| Tiêu chí | `railway.toml` | `render.yaml` (Blueprint IaC) |
+| --- | --- | --- |
+| **Phạm vi cấu hình** | Cấu hình build/deploy cho 1 service (chọn `builder`, `dockerfilePath`, `healthcheckPath`, `restartPolicyType`). | Khai báo toàn bộ stack nhiều service (`web`, `redis`), region, plan, `envVars`, `buildCommand`/`startCommand`. |
+| **Quản lý biến & DB** | Tạo Redis & env vars trên Railway Dashboard (hoặc reference `${{Redis.REDIS_URL}}`). | Khai báo sẵn trong YAML (`sync: false`, `generateValue: true`), Render Blueprint tự tạo cả web + Redis. |
+
+### 3. Pipeline Cloud Run (`cloudbuild.yaml` & `service.yaml` — Exercise 3.3)
+
+Pipeline CI/CD trong `03-cloud-deployment/production-cloud-run/cloudbuild.yaml` chạy tự động khi push lên `main` qua 4 bước tuần tự:
+1. **`test`**: chạy `pytest tests/ -v` trong container `python:3.11-slim`.
+2. **`build` & `push`**: build Docker image gắn tag `$COMMIT_SHA` và `latest` (tận dụng `--cache-from`) rồi đẩy lên Container Registry (`gcr.io/$PROJECT_ID/ai-agent`).
+3. **`deploy`**: chạy `gcloud run deploy` lên Cloud Run (`asia-southeast1`), cấu hình `min-instances=1` (tránh cold start), `max-instances=10`, và inject secret từ Google Secret Manager.
+4. File `service.yaml` (Knative IaC) khai báo giới hạn CPU/RAM (`1` CPU / `512Mi`), concurrency `80`, và `livenessProbe` (`/health`) + `startupProbe` (`/ready`).
+
+---
+
+## Part 6: Production Readiness Check (`06-lab-complete/` — CP5)
+
+Chạy `python check_production_ready.py` trong `06-lab-complete/` (bản đầy đủ, có Docker):
+
+```text
+================================================================
+  📋 Checklist Deliverable
+     ✅ Dockerfile (multi-stage, < 500 MB)
+     ✅ docker-compose.yml (agent + redis)
+     ✅ .dockerignore
+     ✅ Health check endpoint (GET /health)
+     ✅ Readiness endpoint (GET /ready)
+     ✅ API Key authentication
+     ✅ Rate limiting
+     ✅ Cost guard
+     ✅ Config từ environment variables
+     ✅ Structured logging
+     ✅ Graceful shutdown
+     ✅ Public URL ready (Railway / Render config)
+----------------------------------------------------------------
+  Result: 12/12 tiêu chí đạt · 41/41 checks passed
+  🎉 PASS! Agent của bạn đã sẵn sàng cho production.
+================================================================
+```
+
+---
+
+## AI Usage Log
+
+- **Công cụ:** Antigravity AI coding assistant
+- **Mục đích sử dụng:**
+  - Hỗ trợ kiểm tra và chạy các bài lab CP1–CP4 (`01-localhost-vs-production`, `02-docker`, `04-api-gateway`, `05-scaling-reliability`).
+  - Hỗ trợ hoàn thiện các `TODO` trong `06-lab-complete/` (`Dockerfile` multi-stage + `exec uvicorn`, `docker-compose.yml`, `.dockerignore`, `railway.toml`, `app/*.py`) đạt `PASS 12/12`.
+  - Hỗ trợ deploy `06-lab-complete/` lên Railway kèm Redis và biến môi trường bảo mật, sau đó kiểm chứng 4 endpoint public (`/health`, `/ready`, `/ask` 401/200).
+  - Hỗ trợ chạy benchmark load test, eval quality gate (`100%` trên golden dataset), và benchmark scaling + observability stack (Grafana, Jaeger, Prometheus alerts, Locust headless).
+- **Xác minh thủ công / thực nghiệm:** Toàn bộ số liệu trong `MISSION_ANSWERS.md` và `BENCHMARK_REPORT.md` đều lấy trực tiếp từ output lệnh chạy thực tế, JSON reports, CSV Locust và ảnh chụp hệ thống.
